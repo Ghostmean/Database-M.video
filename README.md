@@ -56,6 +56,7 @@ erDiagram
         integer quantity
         numeric price_at_time
     }
+    }
 
 -- Создаем схему с вашей фамилией
 CREATE SCHEMA Ivanov; -- Замените Ivanov на вашу фамилию

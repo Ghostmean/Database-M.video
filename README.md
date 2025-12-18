@@ -802,3 +802,133 @@ ALTER FUNCTION zyryanov_2271.create_optimization_indexes()
     OWNER TO student;
 
 ```
+
+##Итог оптимизации 
+
+# 5 лабораторная работа риггеры и аудит
+## Цель: Реализация бизнес-логики на уровне БД и системы аудита.
+
+📋 Задачи:
+
+### Триггеры каскадного удаления для связей “один-ко-многим”
+
+```sql
+CREATE OR REPLACE FUNCTION zyryanov_2271.cascade_delete_order_items()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Логируем удаляемые элементы заказа
+    INSERT INTO zyryanov_2271.audit_log (
+        table_name, operation, old_data, order_id
+    )
+    SELECT 
+        'order_items', 'CASCADE_DELETE', row_to_json(oi), OLD.order_id
+    FROM zyryanov_2271.order_items oi
+    WHERE oi.order_id = OLD.order_id;
+    
+    -- Удаляем элементы заказа
+    DELETE FROM zyryanov_2271.order_items 
+    WHERE order_id = OLD.order_id;
+    
+    RETURN OLD;
+END;
+$$;
+```
+```sql
+REATE OR REPLACE FUNCTION zyryanov_2271.cascade_delete_client_orders()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Логируем удаляемые заказы перед удалением
+    INSERT INTO zyryanov_2271.audit_log (
+        table_name, operation, old_data, client_id
+    )
+    SELECT 
+        'orders', 'CASCADE_DELETE', row_to_json(o), OLD.client_id
+    FROM zyryanov_2271.orders o
+    WHERE o.client_id = OLD.client_id;
+    
+    -- Удаляем заказы клиента
+    DELETE FROM zyryanov_2271.orders 
+    WHERE client_id = OLD.client_id;
+    
+    RETURN OLD;
+END;
+$$;
+```
+
+### Триггеры аудита изменений (INSERT, UPDATE, DELETE)
+
+```sql
+CREATE OR REPLACE FUNCTION zyryanov_2271.log_clients_changes()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    changed_fields TEXT[];
+BEGIN
+    changed_fields := ARRAY[]::TEXT[];
+    
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO zyryanov_2271.audit_log (
+            table_name, operation, new_data, client_id
+        ) VALUES (
+            'clients', 'INSERT', row_to_json(NEW), NEW.client_id
+        );
+        
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- Определяем измененные поля
+        IF OLD.first_name IS DISTINCT FROM NEW.first_name THEN
+            changed_fields := array_append(changed_fields, 'first_name');
+        END IF;
+        IF OLD.last_name IS DISTINCT FROM NEW.last_name THEN
+            changed_fields := array_append(changed_fields, 'last_name');
+        END IF;
+        IF OLD.email IS DISTINCT FROM NEW.email THEN
+            changed_fields := array_append(changed_fields, 'email');
+        END IF;
+        IF OLD.phone IS DISTINCT FROM NEW.phone THEN
+            changed_fields := array_append(changed_fields, 'phone');
+        END IF;
+        
+        INSERT INTO zyryanov_2271.audit_log (
+            table_name, operation, old_data, new_data, changed_fields, client_id
+        ) VALUES (
+            'clients', 'UPDATE', row_to_json(OLD), row_to_json(NEW), changed_fields, NEW.client_id
+        );
+        
+    ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO zyryanov_2271.audit_log (
+            table_name, operation, old_data, client_id
+        ) VALUES (
+            'clients', 'DELETE', row_to_json(OLD), OLD.client_id
+        );
+    END IF;
+    
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+```
+### Создание таблицы-журнала для отслеживания изменений
+```sql
+-- Создаем таблицу для аудита изменений
+CREATE TABLE IF NOT EXISTS zyryanov_2271.audit_log (
+    audit_id SERIAL PRIMARY KEY,
+    table_name VARCHAR(50) NOT NULL,
+    operation VARCHAR(10) NOT NULL, -- INSERT, UPDATE, DELETE
+    old_data JSONB,
+    new_data JSONB,
+    changed_fields TEXT[],
+    client_id INTEGER,
+    order_id INTEGER,
+    changed_by VARCHAR(100) DEFAULT CURRENT_USER,
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Индексы для быстрого поиска в журнале
+CREATE INDEX IF NOT EXISTS idx_audit_table_operation ON zyryanov_2271.audit_log(table_name, operation);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON zyryanov_2271.audit_log(changed_at);
+CREATE INDEX IF NOT EXISTS idx_audit_client_id ON zyryanov_2271.audit_log(client_id);
+```

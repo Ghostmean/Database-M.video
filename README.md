@@ -155,16 +155,16 @@ JOIN zyryanov_2271.products p ON oi.product_id = p.product_id
 ORDER BY o.order_id;
 ```
 
-Лабораторная работа 3. Представления и процедуры
-Цель: Освоение механизмов абстракции данных и программных модулей.
+# Лабораторная работа 3. Представления и процедуры
+## Цель: Освоение механизмов абстракции данных и программных модулей.
 
-📋 Задачи:
+## 📋 Задачи:
 
-Создание представлений для выходных документов
-Разработка хранимых процедур с параметрами
-Представление сложных запросов при помощи представления
+### Создание представлений для выходных документов
+### Разработка хранимых процедур с параметрами
+### Представление сложных запросов при помощи представления
 
-1.Создание представлений для выходных документов
+### 1.Создание представлений для выходных документов
 ```sql
 CREATE OR REPLACE VIEW zyryanov_2271.active_clients_report
  AS
@@ -221,6 +221,7 @@ CREATE OR REPLACE VIEW zyryanov_2271.products_stock_report
 ALTER TABLE zyryanov_2271.products_stock_report
     OWNER TO student;
 ```
+### Создание процедур 
 ```sql
 CREATE OR REPLACE PROCEDURE zyryanov_2271.get_active_clients_report(
     OUT p_total_count bigint,
@@ -516,6 +517,7 @@ ALTER PROCEDURE zyryanov_2271.get_inventory_report(
     text, numeric, numeric, integer, integer, text, integer, integer
 ) OWNER TO student;
 ```
+### Запросы к представлениям 
 
 ```sql
 CALL zyryanov_2271.get_active_clients_report(NULL, 1, NULL, NULL, 'gmail.com', 'full_name', 'ASC', 50, 0);
@@ -588,3 +590,215 @@ ORDER BY
         ELSE 3
     END;
  ```
+
+
+# 4 Лабораторная работа Анализ производительности
+## Цель: Освоение методов анализа и оптимизации производительности БД.
+
+📋 Задачи:
+
+### Создание генератора данных (20 000 записей в каждой таблице)
+### Анализ планов выполнения запросов (EXPLAIN ANALYZE)
+### Оптимизация БД через индексы и настройки
+### Сравнение производительности до/после оптимизации
+
+#### Создание генератора данных (20 000 записей в каждой таблице)
+```sql
+-- PROCEDURE: zyryanov_2271.generate_clients_data(integer)
+
+-- DROP PROCEDURE IF EXISTS zyryanov_2271.generate_clients_data(integer);
+
+CREATE OR REPLACE PROCEDURE zyryanov_2271.generate_clients_data(
+	IN p_count integer DEFAULT 20000)
+LANGUAGE 'plpgsql'
+AS $BODY$
+DECLARE
+    i INTEGER;
+    first_names TEXT[] := ARRAY['Иван', 'Мария', 'Алексей', 'Елена', 'Дмитрий', 'Ольга', 'Сергей', 'Анна', 'Андрей', 'Наталья'];
+    last_names TEXT[] := ARRAY['Иванов', 'Петров', 'Сидоров', 'Кузнецов', 'Смирнов', 'Попов', 'Васильев', 'Новиков', 'Федоров', 'Морозов'];
+    domains TEXT[] := ARRAY['mail.ru', 'gmail.com', 'yandex.ru', 'hotmail.com'];
+BEGIN
+    FOR i IN 1..p_count LOOP
+        INSERT INTO zyryanov_2271.clients (
+            first_name, 
+            last_name, 
+            email, 
+            phone, 
+            registration_date
+        ) VALUES (
+            first_names[1 + (i % array_length(first_names, 1))],
+            last_names[1 + ((i + 2) % array_length(last_names, 1))],
+            'client_' || (EXTRACT(EPOCH FROM NOW())::BIGINT + i) || '@' || domains[1 + (i % array_length(domains, 1))],
+            CASE WHEN i % 10 != 0 THEN '+7(9' || LPAD((i % 1000000)::TEXT, 9, '0') ELSE NULL END,
+            CURRENT_DATE - (RANDOM() * 365 * 2)::INTEGER
+        );
+        
+        IF i % 5000 = 0 THEN
+            RAISE NOTICE 'Сгенерировано клиентов: %', i;
+        END IF;
+    END LOOP;
+END;
+$BODY$;
+ALTER PROCEDURE zyryanov_2271.generate_clients_data(integer)
+    OWNER TO student;
+
+```
+```sql
+-- PROCEDURE: zyryanov_2271.generate_products_data(integer)
+
+-- DROP PROCEDURE IF EXISTS zyryanov_2271.generate_products_data(integer);
+
+CREATE OR REPLACE PROCEDURE zyryanov_2271.generate_products_data(
+	IN p_count integer DEFAULT 20000)
+LANGUAGE 'plpgsql'
+AS $BODY$
+DECLARE
+    i INTEGER;
+    categories TEXT[] := ARRAY['Электроника', 'Одежда', 'Книги', 'Мебель', 'Спорт', 'Красота', 'Авто', 'Дом', 'Игрушки', 'Еда'];
+    products TEXT[] := ARRAY['Смартфон', 'Ноутбук', 'Планшет', 'Наушники', 'Телевизор', 'Фотоаппарат', 'Часы', 'Игровая консоль'];
+BEGIN
+    FOR i IN 1..p_count LOOP
+        INSERT INTO zyryanov_2271.products (
+            product_name,
+            description,
+            price,
+            stock_quantity
+        ) VALUES (
+            products[1 + (i % array_length(products, 1))] || ' ' || 
+                (ARRAY['Pro', 'Max', 'Lite', 'Ultra', 'Premium'])[1 + ((i+1) % 5)] || ' ' || i,
+            'Высококачественный ' || products[1 + (i % array_length(products, 1))] || 
+                ' в категории ' || categories[1 + (i % array_length(categories, 1))],
+            (RANDOM() * 100000 + 1000)::NUMERIC(10,2),
+            (RANDOM() * 1000)::INTEGER
+        );
+        
+        IF i % 5000 = 0 THEN
+            RAISE NOTICE 'Сгенерировано товаров: %', i;
+        END IF;
+    END LOOP;
+END;
+$BODY$;
+ALTER PROCEDURE zyryanov_2271.generate_products_data(integer)
+    OWNER TO student;
+```
+```sql
+-- PROCEDURE: zyryanov_2271.generate_orders_data_quick(integer)
+
+-- DROP PROCEDURE IF EXISTS zyryanov_2271.generate_orders_data_quick(integer);
+
+CREATE OR REPLACE PROCEDURE zyryanov_2271.generate_orders_data_quick(
+	IN p_count integer DEFAULT 20000)
+LANGUAGE 'plpgsql'
+AS $BODY$
+DECLARE
+    client_ids INTEGER[];
+    product_ids INTEGER[];
+    client_count INTEGER;
+    product_count INTEGER;
+BEGIN
+    RAISE NOTICE 'Начало быстрой генерации заказов...';
+    
+    -- Получаем ID клиентов и товаров
+    SELECT ARRAY(SELECT client_id FROM zyryanov_2271.clients) INTO client_ids;
+    SELECT ARRAY(SELECT product_id FROM zyryanov_2271.products) INTO product_ids;
+    
+    client_count := array_length(client_ids, 1);
+    product_count := array_length(product_ids, 1);
+    
+    -- Создаем заказы одним запросом
+    WITH new_orders AS (
+        INSERT INTO zyryanov_2271.orders (
+            client_id,
+            order_date,
+            status
+        )
+        SELECT 
+            client_ids[1 + ((seq - 1) % client_count)],
+            CURRENT_TIMESTAMP - (random() * 365 * 24 * 60 * 60 * INTERVAL '1 second'),
+            (ARRAY['Новый', 'Подтвержден', 'Отправлен', 'Доставлен', 'Отменен'])[1 + (seq % 5)]
+        FROM generate_series(1, p_count) as seq
+        RETURNING order_id
+    )
+    -- Создаем элементы заказов одним запросом
+    INSERT INTO zyryanov_2271.order_items (
+        order_id,
+        product_id,
+        quantity,
+        price_at_time
+    )
+    SELECT 
+        no.order_id,
+        product_ids[1 + ((no.order_id + item_num - 1) % product_count)],
+        (1 + (floor(random() * 9)::INTEGER) + 1),
+        p.price
+    FROM new_orders no
+    CROSS JOIN generate_series(1, (1 + (floor(random() * 4)::INTEGER))) as item_num
+    JOIN zyryanov_2271.products p ON p.product_id = product_ids[1 + ((no.order_id + item_num - 1) % product_count)];
+    
+    RAISE NOTICE 'Быстрая генерация заказов завершена! Создано заказов: %', p_count;
+END;
+$BODY$;
+ALTER PROCEDURE zyryanov_2271.generate_orders_data_quick(integer)
+    OWNER TO student;
+```
+
+## Анализ плана выполения 
+```sql
+EXPLAIN (ANALYZE) 
+SELECT * FROM zyryanov_2271.clients WHERE email LIKE '%gmail.com%';
+```
+
+## создание индексов для оптимизации
+```sql
+-- FUNCTION: zyryanov_2271.create_optimization_indexes()
+
+-- DROP FUNCTION IF EXISTS zyryanov_2271.create_optimization_indexes();
+
+CREATE OR REPLACE FUNCTION zyryanov_2271.create_optimization_indexes(
+	)
+    RETURNS void
+    LANGUAGE 'plpgsql'
+    COST 100
+    VOLATILE PARALLEL UNSAFE
+AS $BODY$
+BEGIN
+    RAISE NOTICE 'Создание оптимизированных индексов...';
+    
+    -- Удаляем старые индексы чтобы избежать конфликтов
+    DROP INDEX IF EXISTS zyryanov_2271.idx_clients_email;
+    DROP INDEX IF EXISTS zyryanov_2271.idx_clients_email_pattern;
+    DROP INDEX IF EXISTS zyryanov_2271.idx_orders_client_id;
+    DROP INDEX IF EXISTS zyryanov_2271.idx_orders_client_id_count;
+    
+    -- 1. Базовые индексы для точного поиска
+    CREATE INDEX idx_clients_email ON zyryanov_2271.clients(email);
+    RAISE NOTICE 'Создан индекс idx_clients_email';
+    
+    -- 2. Индекс для LIKE поиска (только с начала строки)
+    CREATE INDEX idx_clients_email_pattern ON zyryanov_2271.clients(email varchar_pattern_ops);
+    RAISE NOTICE 'Создан индекс idx_clients_email_pattern';
+    
+    -- 3. Индексы для JOIN оптимизации
+    CREATE INDEX idx_orders_client_id ON zyryanov_2271.orders(client_id);
+    RAISE NOTICE 'Создан индекс idx_orders_client_id';
+    
+    -- 4. Покрывающий индекс для агрегации
+    CREATE INDEX idx_orders_client_id_count ON zyryanov_2271.orders(client_id, order_id);
+    RAISE NOTICE 'Создан индекс idx_orders_client_id_count';
+    
+    -- 5. Индекс для поиска по дате
+    CREATE INDEX idx_orders_date ON zyryanov_2271.orders(order_date);
+    RAISE NOTICE 'Создан индекс idx_orders_date';
+    
+    -- 6. Составной индекс для сложных запросов
+    CREATE INDEX idx_clients_covering ON zyryanov_2271.clients(client_id, email, first_name, last_name);
+    RAISE NOTICE 'Создан индекс idx_clients_covering';
+    
+    RAISE NOTICE 'Все индексы успешно созданы!';
+END;
+$BODY$;
+
+ALTER FUNCTION zyryanov_2271.create_optimization_indexes()
+    OWNER TO student;
+
+```
